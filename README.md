@@ -47,7 +47,7 @@ internal/
 ## 🚀 Getting Started
 
 ```bash
-go get github.com/kokaq/kokaq-core
+go get github.com/kokaq/core
 ```
 Import and use in your server:
 
