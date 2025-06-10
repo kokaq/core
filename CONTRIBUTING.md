@@ -71,7 +71,7 @@ test: add fuzzing for wireframe decoding
 ## 🙋 Support & Questions
 
 - For bugs or issues, open a [GitHub issue](https://github.com/kokaq/kokaq-core/issues)
-- For design questions or roadmap discussion, open a [GitHub discussion](https://github.com/kokaq/kokaq-core/discussions)
+- For design questions or roadmap discussion, open a [GitHub discussion](https://github.com/orgs/kokaq/discussions)
 
 ## 🙌 Thank You!
 
