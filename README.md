@@ -53,7 +53,7 @@ Import and use in your server:
 
 ```go
 import (
-    "github.com/kokaq/kokaq-core/pkg/queue"
+    "github.com/kokaq/core/pkg/queue"
 )
 queueNs, _ := queue.NewKokaq(namespaceId, queueId)
 err := queueNs.PushItem(queue.NewQueueItem(uuid.New(), priority))
