@@ -34,15 +34,14 @@
 
 ```
 pkg/
-├── storage/ # Enqueue/dequeue interfaces and backends
-├── scheduler/ # Priority/fairness strategies
-├── wireframe/ # Task models and serialization logic
-└── proxy/ # Middleware-style decorators
+├── queue/ # Enqueue/dequeue interfaces and backends
+├── scheduler/ # Priority/fairness strategies (Pending)
+├── wireframe/ # Task models and serialization logic (Pending)
+└── utils/ # Utility methods 
 
 internal/
 ├── profiler/ # CPU, mem, IO profilers
-├── clock/ # Mockable time source
-└── metrics/ # Internal metrics helpers (no exporters)
+└── metrics/ # Internal metrics helpers (no exporters) (Pending)
 ```
 
 ## 🚀 Getting Started
@@ -54,11 +53,11 @@ Import and use in your server:
 
 ```go
 import (
-    "github.com/kokaq/kokaq-core/pkg/storage"
+    "github.com/kokaq/kokaq-core/pkg/queue"
 )
-
-q := storage.NewInMemoryQueue()
-_ = q.Enqueue(ctx, storage.Item{/*...*/})
+queueNs, _ := queue.NewKokaq(namespaceId, queueId)
+err := queueNs.PushItem(queue.NewQueueItem(uuid.New(), priority))
+item, err := q.PopItem()
 ```
 For network server, see [kokaq-server](https://github.com/kokaq/kokaq-server).
 
@@ -70,7 +69,7 @@ go test -race ./...
 ```
 To run benchmarks:
 ```bash
-go test -bench=. ./pkg/scheduler
+go test -bench=. ./pkg/queue
 ```
 
 ## 🧱 Contributing
