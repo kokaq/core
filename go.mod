@@ -1,4 +1,4 @@
-module github.com/kokaq/core/v1
+module github.com/kokaq/core
 
 go 1.24.4
 

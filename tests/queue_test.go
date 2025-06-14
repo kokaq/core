@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/kokaq/core/v1/pkg/queue"
+	"github.com/kokaq/core/pkg/queue"
 	"github.com/stretchr/testify/assert"
 )
 

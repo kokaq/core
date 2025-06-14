@@ -1,6 +1,6 @@
 package main
 
-import "github.com/kokaq/core/v1/internal/profiler"
+import "github.com/kokaq/core/internal/profiler"
 
 func main() {
 	stop := profiler.Start(profiler.Config{

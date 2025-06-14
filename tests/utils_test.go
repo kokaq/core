@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/kokaq/core/v1/pkg/utils"
+	"github.com/kokaq/core/pkg/utils"
 	"github.com/stretchr/testify/assert"
 )
 

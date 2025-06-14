@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
-	"github.com/kokaq/core/v1/pkg/utils"
+	"github.com/kokaq/core/pkg/utils"
 )
 
 func NewQueueItem(id uuid.UUID, priority int) *QueueItem {

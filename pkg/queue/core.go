@@ -7,7 +7,7 @@ import (
 	"math/bits"
 	"os"
 
-	"github.com/kokaq/core/v1/pkg/utils"
+	"github.com/kokaq/core/pkg/utils"
 )
 
 func NewKokaqCore(pagesPath string) (*KokaqCore, error) {
