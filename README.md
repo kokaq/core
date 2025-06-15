@@ -2,15 +2,15 @@
   <img height="300" src="https://github.com/kokaq/.github/blob/main/kokaq-core.png?raw=true" alt="cute quokka as kokaq logo"/>
 </div>
 
-`kokaq-core` is the heart of `kokaq`, a distributed, cloud-native priority queue implementation. It provides the foundational logic and data structures for enabling true, weight-based prioritization across distributed systems.
+`core` is the heart of `kokaq`, a distributed, cloud-native priority queue implementation. It provides the foundational logic and data structures for enabling true, weight-based prioritization across distributed systems.
 
 
-<!-- [![Go Reference](https://pkg.go.dev/badge/github.com/kokaq/kokaq-core.svg)](https://pkg.go.dev/github.com/kokaq/kokaq-core) -->
-<!-- [![Tests](https://github.com/kokaq/kokaq-core/actions/workflows/test.yml/badge.svg)](https://github.com/kokaq/kokaq-core/actions/workflows/test.yml) -->
+<!-- [![Go Reference](https://pkg.go.dev/badge/github.com/kokaq/core.svg)](https://pkg.go.dev/github.com/kokaq/core) -->
+<!-- [![Tests](https://github.com/kokaq/core/actions/workflows/test.yml/badge.svg)](https://github.com/kokaq/core/actions/workflows/test.yml) -->
 
-## 🔍 What is kokaq-core?
+## 🔍 What is core?
 
-`kokaq-core` contains all domain logic for the `kokaq` platform:
+`core` contains all domain logic for the `kokaq` platform:
 - Pluggable storage backends for task persistence
 - Scheduler strategies for priority and fairness
 - Task and message wireframe implementations
@@ -59,7 +59,7 @@ queueNs, _ := queue.NewKokaq(namespaceId, queueId)
 err := queueNs.PushItem(queue.NewQueueItem(uuid.New(), priority))
 item, err := q.PopItem()
 ```
-For network server, see [kokaq-server](https://github.com/kokaq/kokaq-server).
+For network server, see [server](https://github.com/kokaq/server).
 
 ## 🧪 Running Tests
 
