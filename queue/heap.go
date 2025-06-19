@@ -202,6 +202,7 @@ func (queue *KokaqHeap) localHeapifyUp(index int, heap []byte) (bool, error) {
 		bytesParent := heap[startPointParent : startPointParent+queue.nodeSizeInBytes]
 		priorityParent := binary.LittleEndian.Uint64(bytesParent[:queue.prioritySizeInBytes])
 
+		// TODO: Priority comparison should be configurable
 		if priorityChild > priorityParent {
 			tempByteParents := make([]byte, len(bytesParent))
 			copy(tempByteParents, bytesParent)
@@ -278,6 +279,7 @@ func (queue *KokaqHeap) localHeapifyDown(heap []byte) (bool, int, error) {
 		//Right child does not exist
 		if priorityRightChild == 0 {
 			//Parent wins, no need to go further
+			// TODO: Priority comparison should be configurable
 			if priorityParent > priorityLeftChild {
 				return false, indexParent, nil
 				//Left child wins still no need to go further
@@ -290,11 +292,13 @@ func (queue *KokaqHeap) localHeapifyDown(heap []byte) (bool, int, error) {
 			}
 		} else {
 			//Both children exist
+			// TODO: Priority comparison should be configurable
 			if priorityParent > priorityLeftChild && priorityParent > priorityRightChild {
 				//parent wins, no need to go further
 				return false, indexParent, nil
 			} else {
 				//Left child wins
+				// TODO: Priority comparison should be configurable
 				if priorityLeftChild > priorityRightChild {
 					tempByteParents := make([]byte, len(parentBytes))
 					copy(tempByteParents, parentBytes)

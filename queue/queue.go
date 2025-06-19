@@ -11,11 +11,12 @@ import (
 )
 
 type Kokaq struct {
-	namespaceId   uint32
-	queueId       uint32
-	priorityHeap  *KokaqHeap
-	directoryPath string
-	messageIdSize int
+	namespaceId      uint32
+	queueId          uint32
+	priorityHeap     *KokaqHeap
+	invisibilityHeap *KokaqHeap
+	directoryPath    string
+	messageIdSize    int
 }
 
 func (pq *Kokaq) PushItem(item *KokaqItem) error {

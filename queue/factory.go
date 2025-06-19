@@ -109,7 +109,6 @@ type NewKokaqConfiguration struct {
 	NamespaceId         uint32
 	QueueId             uint32
 	RootDir             string
-	PagesDir            string
 	MessageIdSize       int
 	HeapMaxSize         int
 	PrioritySizeInBytes int
@@ -125,7 +124,6 @@ type NewKokaqHeapConfiguration struct {
 
 func NewDefaultKokaq(namespaceId uint32, queueId uint32) (*Kokaq, error) {
 	// RootDir             = "./data/db"
-	// PagesDir            = "pages"
 	// MessageIdSize       = 16
 	// HeapMaxSize         = 5
 	// PrioritySizeInBytes = 8
@@ -134,7 +132,6 @@ func NewDefaultKokaq(namespaceId uint32, queueId uint32) (*Kokaq, error) {
 		NamespaceId:         namespaceId,
 		QueueId:             queueId,
 		RootDir:             "./data/db",
-		PagesDir:            "pages",
 		MessageIdSize:       16,
 		HeapMaxSize:         5,
 		PrioritySizeInBytes: 8,
@@ -156,7 +153,7 @@ func NewKokaq(config NewKokaqConfiguration) (*Kokaq, error) {
 	}
 	//Initialize a new core heap
 	heapCore, err := NewKokaqHeap(NewKokaqHeapConfiguration{
-		PagesPath:           filepath.Join(dirPath, config.PagesDir),
+		PagesPath:           filepath.Join(dirPath, "pages"),
 		HeapMaxSize:         config.HeapMaxSize,
 		PrioritySizeInBytes: config.PrioritySizeInBytes,
 		IndexSizeInBytes:    config.IndexSizeInBytes,
@@ -165,11 +162,23 @@ func NewKokaq(config NewKokaqConfiguration) (*Kokaq, error) {
 		fmt.Println("Error creating core heap:", namespaceId, queueId, err)
 		return nil, err
 	}
+
+	invisibilityHeap, err := NewKokaqHeap(NewKokaqHeapConfiguration{
+		PagesPath:           filepath.Join(dirPath, "invisible"),
+		HeapMaxSize:         config.HeapMaxSize,
+		PrioritySizeInBytes: config.PrioritySizeInBytes,
+		IndexSizeInBytes:    config.IndexSizeInBytes,
+	})
+	if err != nil {
+		fmt.Println("Error creating invisibility heap:", namespaceId, queueId, err)
+		return nil, err
+	}
 	return &Kokaq{
-		namespaceId:   namespaceId,
-		queueId:       queueId,
-		priorityHeap:  heapCore,
-		directoryPath: dirPath,
-		messageIdSize: config.MessageIdSize,
+		namespaceId:      namespaceId,
+		queueId:          queueId,
+		priorityHeap:     heapCore,
+		invisibilityHeap: invisibilityHeap,
+		directoryPath:    dirPath,
+		messageIdSize:    config.MessageIdSize,
 	}, nil
 }
