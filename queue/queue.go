@@ -7,43 +7,18 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
-	"github.com/kokaq/core/pkg/utils"
+	"github.com/kokaq/core/utils"
 )
 
-func NewQueueItem(id uuid.UUID, priority int) *QueueItem {
-	return &QueueItem{
-		Id:       id,
-		Priority: priority,
-	}
+type Kokaq struct {
+	namespaceId   uint32
+	queueId       uint32
+	priorityHeap  *KokaqHeap
+	directoryPath string
+	messageIdSize int
 }
 
-func NewKokaq(namespaceId uint32, queueId uint32) (*Kokaq, error) {
-
-	//Check whether directory exists or not and if not create it
-	dirPath := filepath.Join(STORAGE_ROOT_DIR, fmt.Sprint(namespaceId), fmt.Sprint(queueId))
-	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-		err := os.MkdirAll(dirPath, os.ModePerm)
-		if err != nil {
-			fmt.Println("Error creating directory:", dirPath, err)
-			return nil, err
-		}
-	}
-
-	//Initialize a new core heap
-	heapCore, err := NewKokaqCore(filepath.Join(dirPath, STORAGE_PAGES_DIR))
-	if err != nil {
-		fmt.Println("Error creating core heap:", namespaceId, queueId, err)
-		return nil, err
-	}
-	return &Kokaq{
-		namespaceId:   namespaceId,
-		queueId:       queueId,
-		pHeap:         heapCore,
-		directoryPath: dirPath,
-	}, nil
-}
-
-func (pq *Kokaq) PushItem(item *QueueItem) error {
+func (pq *Kokaq) PushItem(item *KokaqItem) error {
 	//Priority 0 is reserved for pagging in core heap
 	if item.Priority == 0 {
 		errMsg := "priority 0 is not allowed"
@@ -54,7 +29,7 @@ func (pq *Kokaq) PushItem(item *QueueItem) error {
 	// Create index file if it doesn't exist
 	indexPath := pq.getIndexFilePath(item.Priority)
 	if _, err := os.Stat(indexPath); os.IsNotExist(err) {
-		err2 := pq.pHeap.Push(&heapNode{priority: item.Priority, indexPos: 0})
+		err2 := pq.priorityHeap.Push(NewHeapNode(item.Priority, 0))
 		if err2 != nil {
 			fmt.Println("Error pushing item to core heap", err2)
 			return err2
@@ -66,23 +41,23 @@ func (pq *Kokaq) PushItem(item *QueueItem) error {
 	return nil
 }
 
-func (pq *Kokaq) PopItem() (*QueueItem, error) {
+func (pq *Kokaq) PopItem() (*KokaqItem, error) {
 
 	// Peek item with highest priority
-	node, err := pq.pHeap.Peek()
+	node, err := pq.priorityHeap.Peek()
 	if err != nil {
 		fmt.Println("Error peeking item from core heap", err)
 		return nil, err
 	}
 
-	priority := node.priority
+	priority := node.Priority
 	indexPath := pq.getIndexFilePath(priority)
-	data, err := utils.ReadBytesFromFile(indexPath, node.indexPos*STORAGE_MESSAGE_ID_SIZE, 2*STORAGE_MESSAGE_ID_SIZE)
+	data, err := utils.ReadBytesFromFile(indexPath, node.Index*pq.messageIdSize, 2*pq.messageIdSize)
 	if err != nil {
 		fmt.Println("Error reading index file", err)
 		return nil, err
 	}
-	itemId, err := uuid.FromBytes(data[:STORAGE_MESSAGE_ID_SIZE])
+	itemId, err := uuid.FromBytes(data[:pq.messageIdSize])
 	if err != nil {
 		fmt.Println("Message id is not valid in index file", err)
 		return nil, err
@@ -93,40 +68,40 @@ func (pq *Kokaq) PopItem() (*QueueItem, error) {
 		return nil, errors.New(errMsg)
 	}
 
-	nextItemId, err := uuid.FromBytes(data[STORAGE_MESSAGE_ID_SIZE:])
+	nextItemId, err := uuid.FromBytes(data[pq.messageIdSize:])
 	if err != nil && nextItemId == uuid.Nil {
 		// Delete index file since no emore items with that priority
 		if err := os.Remove(indexPath); err != nil {
 			fmt.Println("Error removing index file:", indexPath, err)
 			return nil, err
 		}
-		_, err := pq.pHeap.Pop()
+		_, err := pq.priorityHeap.Pop()
 		if err != nil {
 			fmt.Println("Error poping item from core heap", err)
 			return nil, err
 		}
 	} else {
-		err := pq.pHeap.SetIndexofPeekElement(node.indexPos + 1)
+		err := pq.priorityHeap.SetIndexofPeekElement(node.Index + 1)
 		if err != nil {
 			fmt.Println("Error incrementing index of top element from core heap", err)
 			return nil, err
 		}
 	}
-	return NewQueueItem(itemId, priority), nil
+	return NewKokaqItem(itemId, priority), nil
 }
 
-func (pq *Kokaq) PeekItem() (*QueueItem, error) {
+func (pq *Kokaq) PeekItem() (*KokaqItem, error) {
 
 	// Peek item with highest priority
-	node, err := pq.pHeap.Peek()
+	node, err := pq.priorityHeap.Peek()
 	if err != nil {
 		fmt.Println("Error peeking item from core heap", err)
 		return nil, err
 	}
 
-	priority := node.priority
+	priority := node.Priority
 	indexPath := pq.getIndexFilePath(priority)
-	data, err := utils.ReadBytesFromFile(indexPath, node.indexPos*STORAGE_MESSAGE_ID_SIZE, STORAGE_MESSAGE_ID_SIZE)
+	data, err := utils.ReadBytesFromFile(indexPath, node.Index*pq.messageIdSize, pq.messageIdSize)
 	if err != nil {
 		fmt.Println("Error reading index file", err)
 		return nil, err
@@ -141,19 +116,19 @@ func (pq *Kokaq) PeekItem() (*QueueItem, error) {
 		fmt.Println(errMsg, err)
 		return nil, errors.New(errMsg)
 	}
-	return NewQueueItem(itemId, priority), nil
+	return NewKokaqItem(itemId, priority), nil
 }
 
 func (pq *Kokaq) IsEmpty() bool {
 
-	node, err := pq.pHeap.Peek()
+	node, err := pq.priorityHeap.Peek()
 	if err != nil {
 		panic("Error peeking item from core heap")
 	}
 
-	priority := node.priority
+	priority := node.Priority
 	indexPath := pq.getIndexFilePath(priority)
-	data, err := utils.ReadBytesFromFile(indexPath, node.indexPos*STORAGE_MESSAGE_ID_SIZE, STORAGE_MESSAGE_ID_SIZE)
+	data, err := utils.ReadBytesFromFile(indexPath, node.Index*pq.messageIdSize, pq.messageIdSize)
 	if err != nil {
 		panic("Error reading index file")
 	}

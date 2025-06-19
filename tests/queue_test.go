@@ -4,21 +4,21 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/kokaq/core/pkg/queue"
+	"github.com/kokaq/core/queue"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestQueue_EnqueueDequeue(t *testing.T) {
-	q, _ := queue.NewKokaq(1, 1)
+	q, _ := queue.NewDefaultKokaq(1, 1)
 	assert.True(t, q.IsEmpty(), "Queue should be empty initially")
 
 	a := uuid.New()
 	b := uuid.New()
 	c := uuid.New()
 
-	q.PushItem(queue.NewQueueItem(c, 1))
-	q.PushItem(queue.NewQueueItem(b, 2))
-	q.PushItem(queue.NewQueueItem(a, 3))
+	q.PushItem(queue.NewKokaqItem(c, 1))
+	q.PushItem(queue.NewKokaqItem(b, 2))
+	q.PushItem(queue.NewKokaqItem(a, 3))
 
 	assert.False(t, q.IsEmpty(), "Queue should not be empty after enqueuing")
 
@@ -38,7 +38,7 @@ func TestQueue_EnqueueDequeue(t *testing.T) {
 }
 
 func TestQueue_DequeueEmpty(t *testing.T) {
-	q, _ := queue.NewKokaq(2, 2)
+	q, _ := queue.NewDefaultKokaq(2, 2)
 	item, err := q.PopItem()
 	assert.NotNil(t, err, "Dequeue should fail on empty queue")
 	assert.Nil(t, item, "Dequeued item from empty queue should be nil")

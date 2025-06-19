@@ -5,83 +5,37 @@ import (
 	"errors"
 	"fmt"
 	"math/bits"
-	"os"
 
-	"github.com/kokaq/core/pkg/utils"
+	"github.com/kokaq/core/utils"
 )
 
-func NewKokaqCore(pagesPath string) (*KokaqCore, error) {
-	// if exists
-	if _, err := os.Stat(pagesPath); os.IsNotExist(err) {
-		file, err := os.Create(pagesPath)
-		if err != nil {
-			fmt.Println("Error creating pages file: ", pagesPath, err)
-			return nil, err
-		}
-		defer file.Close()
-		return &KokaqCore{
-			totalNodes:              0,
-			totalPages:              0,
-			currentLoadedPageNumber: 0,
-			currentLoadedPage:       nil,
-			pagesPath:               pagesPath,
-		}, err
-	} else {
-		//TODO: need to check whether heap is logically valid or not
-		cnt := 1
-		nodes := 0
-		pages := 0
-		for {
-			currentPage, err := utils.ReadBytesFromFile(pagesPath, (cnt-1)*STORAGE_SUBHEAP_SIZE_IN_BYTES, STORAGE_SUBHEAP_SIZE_IN_BYTES)
-			if err != nil {
-				fmt.Println("Error reading page: ", cnt, " from file: ", pagesPath, err)
-				return nil, err
-			}
-			if len(currentPage) == 0 {
-				break
-			}
-			nodesInPage := 0
-			for i := 1; i <= STORAGE_SUBHEAP_NODES; i++ {
-				currentNode, err := deserializeNode(currentPage[(i-1)*STORAGE_NODE_SIZE_IN_BYTES : i*STORAGE_NODE_SIZE_IN_BYTES])
-				if err != nil {
-					fmt.Println("Error deserializing node: ", i, " from page: ", cnt, " in file: ", pagesPath, err)
-					return nil, err
-				}
-				if currentNode.priority == 0 {
-					continue
-				}
-				if i == 1 && cnt != 1 {
-					continue
-				}
-				nodesInPage++
-			}
-			nodes += nodesInPage
-			if nodesInPage > 0 {
-				pages++
-			}
-			cnt++
-		}
-
-		return &KokaqCore{
-			totalNodes:              nodes,
-			totalPages:              pages,
-			currentLoadedPageNumber: 0,
-			currentLoadedPage:       nil,
-			pagesPath:               pagesPath,
-		}, nil
-	}
+type KokaqHeap struct {
+	totalNodes              int
+	totalPages              int
+	currentLoadedPageNumber int
+	currentLoadedPage       []byte
+	pagesPath               string
+	heapMaxSize             int
+	prioritySizeInBytes     int
+	indexSizeInBytes        int
+	subheapLastLayerNodes   int
+	subheapNodes            int
+	nodeSizeInBytes         int
+	subheapSizeInBytes      int
 }
 
-func (queue *KokaqCore) Push(node *heapNode) error {
+// Heap Public Functions
+
+func (queue *KokaqHeap) Push(node *HeapNode) error {
 	if queue.totalNodes == 0 {
 		queue.loadPage(0)
-		newPage := make([]byte, STORAGE_SUBHEAP_SIZE_IN_BYTES)
-		newNode, err := serializeNode(node)
+		newPage := make([]byte, queue.subheapSizeInBytes)
+		newNode, err := serializeNode(node, queue.prioritySizeInBytes, queue.indexSizeInBytes, queue.nodeSizeInBytes)
 		if err != nil {
 			fmt.Println("Error serializing node", err)
 			return err
 		}
-		copy(newPage[:STORAGE_NODE_SIZE_IN_BYTES], newNode)
+		copy(newPage[:queue.nodeSizeInBytes], newNode)
 		queue.saveNewPage(1, newPage)
 	} else {
 		queue.pageHeapifyUp(queue.totalNodes+1, node)
@@ -90,7 +44,7 @@ func (queue *KokaqCore) Push(node *heapNode) error {
 	return nil
 }
 
-func (queue *KokaqCore) Pop() (*heapNode, error) {
+func (queue *KokaqHeap) Pop() (*HeapNode, error) {
 	if queue.totalNodes == 0 {
 		errMsg := "no nodes to pop"
 		fmt.Println(errMsg)
@@ -102,12 +56,12 @@ func (queue *KokaqCore) Pop() (*heapNode, error) {
 			return nil, err
 		}
 
-		newEle := make([]byte, STORAGE_NODE_SIZE_IN_BYTES)
-		oldEle, err := deserializeNode(page[:STORAGE_NODE_SIZE_IN_BYTES])
+		newEle := make([]byte, queue.nodeSizeInBytes)
+		oldEle, err := deserializeNode(page[:queue.nodeSizeInBytes], queue.prioritySizeInBytes)
 		if err != nil {
 			return nil, err
 		}
-		copy(page[:STORAGE_NODE_SIZE_IN_BYTES], newEle)
+		copy(page[:queue.nodeSizeInBytes], newEle)
 		queue.totalNodes -= 1
 		queue.totalPages -= 1
 		return oldEle, nil
@@ -123,18 +77,18 @@ func (queue *KokaqCore) Pop() (*heapNode, error) {
 		if err != nil {
 			return nil, err
 		}
-		startPoint := (localIndex - 1) * (STORAGE_NODE_SIZE_IN_BYTES)
-		lastNode, err := deserializeNode(page[startPoint : startPoint+STORAGE_NODE_SIZE_IN_BYTES])
+		startPoint := (localIndex - 1) * (queue.nodeSizeInBytes)
+		lastNode, err := deserializeNode(page[startPoint:startPoint+queue.nodeSizeInBytes], queue.prioritySizeInBytes)
 		if err != nil {
 			return nil, err
 		}
-		newNode := make([]byte, STORAGE_NODE_SIZE_IN_BYTES)
+		newNode := make([]byte, queue.nodeSizeInBytes)
 		copy(page[startPoint:], newNode)
 		queue.totalNodes -= 1
 		if localIndex == 2 && pageNumber != 1 {
 			queue.totalPages -= 1
 			//Remove the root node as well
-			copy(page[:STORAGE_NODE_SIZE_IN_BYTES], newNode)
+			copy(page[:queue.nodeSizeInBytes], newNode)
 		}
 		err = queue.pageHeapifyDown(lastNode)
 		if err != nil {
@@ -144,35 +98,37 @@ func (queue *KokaqCore) Pop() (*heapNode, error) {
 	}
 }
 
-func (queue *KokaqCore) Peek() (*heapNode, error) {
+func (queue *KokaqHeap) Peek() (*HeapNode, error) {
 	page, err := queue.loadPage(1)
 	if err != nil {
 		return nil, err
 	}
-	return deserializeNode(page[:STORAGE_NODE_SIZE_IN_BYTES])
+	return deserializeNode(page[:queue.nodeSizeInBytes], queue.prioritySizeInBytes)
 }
 
-func (queue *KokaqCore) SetIndexofPeekElement(index int) error {
+func (queue *KokaqHeap) SetIndexofPeekElement(index int) error {
 	page, err := queue.loadPage(1)
 	if err != nil {
 		return err
 	}
-	node, err := deserializeNode(page[:STORAGE_NODE_SIZE_IN_BYTES])
+	node, err := deserializeNode(page[:queue.nodeSizeInBytes], queue.prioritySizeInBytes)
 	if err != nil {
 		return err
 	}
 
-	node.indexPos = index
-	newNode, err := serializeNode(node)
+	node.Index = index
+	newNode, err := serializeNode(node, queue.prioritySizeInBytes, queue.indexSizeInBytes, queue.nodeSizeInBytes)
 	if err != nil {
 		return err
 	}
 
-	copy(page[:STORAGE_NODE_SIZE_IN_BYTES], newNode)
+	copy(page[:queue.nodeSizeInBytes], newNode)
 	return nil
 }
 
-func (queue *KokaqCore) pageHeapifyUp(index int, node *heapNode) error {
+// Heap Private Functions
+
+func (queue *KokaqHeap) pageHeapifyUp(index int, node *HeapNode) error {
 	pageNumber, localIndex, _ := queue.getLocalHeapDetailsForNode(index)
 	if localIndex == 2 && pageNumber != 1 {
 		//This is the first element in the new page, root node will be there in the parent page, load it and then move forward
@@ -183,14 +139,14 @@ func (queue *KokaqCore) pageHeapifyUp(index int, node *heapNode) error {
 			fmt.Println("Error loading page: ", pageOfParent, " in file: ", queue.pagesPath, err)
 			return err
 		}
-		rootNode := page[(localIndexOfParent-1)*(STORAGE_NODE_SIZE_IN_BYTES) : (localIndexOfParent)*(STORAGE_NODE_SIZE_IN_BYTES)]
+		rootNode := page[(localIndexOfParent-1)*(queue.nodeSizeInBytes) : (localIndexOfParent)*(queue.nodeSizeInBytes)]
 		_, err = queue.loadPage(0)
 		if err != nil {
 			fmt.Println("Error loading page: 0 in file: ", queue.pagesPath, err)
 			return err
 		}
-		newPage := make([]byte, STORAGE_SUBHEAP_SIZE_IN_BYTES)
-		copy(newPage[:STORAGE_NODE_SIZE_IN_BYTES], rootNode)
+		newPage := make([]byte, queue.subheapSizeInBytes)
+		copy(newPage[:queue.nodeSizeInBytes], rootNode)
 		queue.saveNewPage(pageNumber, newPage)
 	}
 
@@ -204,8 +160,8 @@ func (queue *KokaqCore) pageHeapifyUp(index int, node *heapNode) error {
 			fmt.Println("Error loading page: ", pageNumber, " in file: ", queue.pagesPath, err)
 			return err
 		}
-		startPoint := (localIndex - 1) * (STORAGE_NODE_SIZE_IN_BYTES)
-		nodeContent, err := serializeNode(node)
+		startPoint := (localIndex - 1) * (queue.nodeSizeInBytes)
+		nodeContent, err := serializeNode(node, queue.prioritySizeInBytes, queue.indexSizeInBytes, queue.nodeSizeInBytes)
 		if err != nil {
 			fmt.Println("Error serializing node", err)
 			return err
@@ -221,7 +177,7 @@ func (queue *KokaqCore) pageHeapifyUp(index int, node *heapNode) error {
 		// Here we are directly going to previous page and changing the root node, every operation should be doen by loading page
 		// Here, we are sure that page is synced in meomry, to reduce disk I/O this has been done
 		if previousPage != 0 {
-			utils.WriteBytesToFile(queue.pagesPath, int64((previousPage-1)*(STORAGE_SUBHEAP_SIZE_IN_BYTES)), page[startPoint:startPoint+STORAGE_NODE_SIZE_IN_BYTES])
+			utils.WriteBytesToFile(queue.pagesPath, int64((previousPage-1)*(queue.subheapSizeInBytes)), page[startPoint:startPoint+queue.nodeSizeInBytes])
 		}
 		//If first sub heap no need to go up
 		if pageNumber == 1 {
@@ -234,17 +190,17 @@ func (queue *KokaqCore) pageHeapifyUp(index int, node *heapNode) error {
 	return nil
 }
 
-func (queue *KokaqCore) localHeapifyUp(index int, heap []byte) (bool, error) {
+func (queue *KokaqHeap) localHeapifyUp(index int, heap []byte) (bool, error) {
 	indexChild := index
 	for indexChild > 1 {
-		startPointChild := (indexChild - 1) * (STORAGE_NODE_SIZE_IN_BYTES)
-		bytesChild := heap[startPointChild : startPointChild+STORAGE_NODE_SIZE_IN_BYTES]
-		priorityChild := binary.LittleEndian.Uint64(bytesChild[:STORAGE_PRIORITY_SIZE_IN_BYTES])
+		startPointChild := (indexChild - 1) * (queue.nodeSizeInBytes)
+		bytesChild := heap[startPointChild : startPointChild+queue.nodeSizeInBytes]
+		priorityChild := binary.LittleEndian.Uint64(bytesChild[:queue.prioritySizeInBytes])
 
 		indexParent := indexChild / 2
-		startPointParent := (indexParent - 1) * (STORAGE_NODE_SIZE_IN_BYTES)
-		bytesParent := heap[startPointParent : startPointParent+STORAGE_NODE_SIZE_IN_BYTES]
-		priorityParent := binary.LittleEndian.Uint64(bytesParent[:STORAGE_PRIORITY_SIZE_IN_BYTES])
+		startPointParent := (indexParent - 1) * (queue.nodeSizeInBytes)
+		bytesParent := heap[startPointParent : startPointParent+queue.nodeSizeInBytes]
+		priorityParent := binary.LittleEndian.Uint64(bytesParent[:queue.prioritySizeInBytes])
 
 		if priorityChild > priorityParent {
 			tempByteParents := make([]byte, len(bytesParent))
@@ -259,7 +215,7 @@ func (queue *KokaqCore) localHeapifyUp(index int, heap []byte) (bool, error) {
 	return true, nil
 }
 
-func (queue *KokaqCore) pageHeapifyDown(node *heapNode) error {
+func (queue *KokaqHeap) pageHeapifyDown(node *HeapNode) error {
 	needToGoDown := true
 	pageNumber := 1
 	previousPage := 0
@@ -270,11 +226,11 @@ func (queue *KokaqCore) pageHeapifyDown(node *heapNode) error {
 		if err != nil {
 			return err
 		}
-		newNode, err := serializeNode(node)
+		newNode, err := serializeNode(node, queue.prioritySizeInBytes, queue.indexSizeInBytes, queue.nodeSizeInBytes)
 		if err != nil {
 			return err
 		}
-		copy(page[:STORAGE_NODE_SIZE_IN_BYTES], newNode)
+		copy(page[:queue.nodeSizeInBytes], newNode)
 		needToGoDown, lastLayerIndex, err = queue.localHeapifyDown(page)
 		if err != nil {
 			return err
@@ -284,7 +240,7 @@ func (queue *KokaqCore) pageHeapifyDown(node *heapNode) error {
 		// Here we are directly going to previous page and changing the last layer node, every operation should be doen by loading page
 		// Here, we are sure that page is synced in meomry, to reduce disk I/O this has been done
 		if previousPage != 0 {
-			utils.WriteBytesToFile(queue.pagesPath, int64((previousPage-1)*(STORAGE_SUBHEAP_SIZE_IN_BYTES)+(previousIndex-1)*(STORAGE_NODE_SIZE_IN_BYTES)), page[:STORAGE_NODE_SIZE_IN_BYTES])
+			utils.WriteBytesToFile(queue.pagesPath, int64((previousPage-1)*(queue.subheapSizeInBytes)+(previousIndex-1)*(queue.nodeSizeInBytes)), page[:queue.nodeSizeInBytes])
 		}
 
 		//Change parametes for next iterations
@@ -292,7 +248,7 @@ func (queue *KokaqCore) pageHeapifyDown(node *heapNode) error {
 		previousIndex = lastLayerIndex
 
 		//Next page number which needs to be loaded based on current page we are on and last layer index
-		pageNumber = (STORAGE_SUBHEAP_LAST_LAYER_NODES)*(pageNumber-1) + (lastLayerIndex - STORAGE_SUBHEAP_LAST_LAYER_NODES + 1) + 1
+		pageNumber = (queue.subheapLastLayerNodes)*(pageNumber-1) + (lastLayerIndex - queue.subheapLastLayerNodes + 1) + 1
 
 		//If no pages available, no need to go down
 		if pageNumber > queue.totalPages {
@@ -302,17 +258,17 @@ func (queue *KokaqCore) pageHeapifyDown(node *heapNode) error {
 	return nil
 }
 
-func (queue *KokaqCore) localHeapifyDown(heap []byte) (bool, int, error) {
+func (queue *KokaqHeap) localHeapifyDown(heap []byte) (bool, int, error) {
 	indexParent := 1
-	for indexParent < STORAGE_SUBHEAP_LAST_LAYER_NODES {
-		parentBytes := heap[(indexParent-1)*(STORAGE_NODE_SIZE_IN_BYTES) : (indexParent)*(STORAGE_NODE_SIZE_IN_BYTES)]
-		priorityParent := binary.LittleEndian.Uint64(parentBytes[:STORAGE_PRIORITY_SIZE_IN_BYTES])
+	for indexParent < queue.subheapLastLayerNodes {
+		parentBytes := heap[(indexParent-1)*(queue.nodeSizeInBytes) : (indexParent)*(queue.nodeSizeInBytes)]
+		priorityParent := binary.LittleEndian.Uint64(parentBytes[:queue.prioritySizeInBytes])
 		indexLeftChild := indexParent * 2
 		indexRightChild := indexLeftChild + 1
-		leftChildBytes := heap[(indexLeftChild-1)*(STORAGE_NODE_SIZE_IN_BYTES) : (indexLeftChild)*(STORAGE_NODE_SIZE_IN_BYTES)]
-		rightChildBytes := heap[(indexRightChild-1)*(STORAGE_NODE_SIZE_IN_BYTES) : (indexRightChild)*(STORAGE_NODE_SIZE_IN_BYTES)]
-		priorityLeftChild := binary.LittleEndian.Uint64(leftChildBytes[:STORAGE_PRIORITY_SIZE_IN_BYTES])
-		priorityRightChild := binary.LittleEndian.Uint64(rightChildBytes[:STORAGE_PRIORITY_SIZE_IN_BYTES])
+		leftChildBytes := heap[(indexLeftChild-1)*(queue.nodeSizeInBytes) : (indexLeftChild)*(queue.nodeSizeInBytes)]
+		rightChildBytes := heap[(indexRightChild-1)*(queue.nodeSizeInBytes) : (indexRightChild)*(queue.nodeSizeInBytes)]
+		priorityLeftChild := binary.LittleEndian.Uint64(leftChildBytes[:queue.prioritySizeInBytes])
+		priorityRightChild := binary.LittleEndian.Uint64(rightChildBytes[:queue.prioritySizeInBytes])
 
 		//None of the childern exist, so no need to go further
 		if priorityLeftChild == 0 && priorityRightChild == 0 {
@@ -328,8 +284,8 @@ func (queue *KokaqCore) localHeapifyDown(heap []byte) (bool, int, error) {
 			} else {
 				tempByteParents := make([]byte, len(parentBytes))
 				copy(tempByteParents, parentBytes)
-				copy(heap[(indexParent-1)*(STORAGE_NODE_SIZE_IN_BYTES):], leftChildBytes)
-				copy(heap[(indexLeftChild-1)*(STORAGE_NODE_SIZE_IN_BYTES):], tempByteParents)
+				copy(heap[(indexParent-1)*(queue.nodeSizeInBytes):], leftChildBytes)
+				copy(heap[(indexLeftChild-1)*(queue.nodeSizeInBytes):], tempByteParents)
 				return false, indexLeftChild, nil
 			}
 		} else {
@@ -342,15 +298,15 @@ func (queue *KokaqCore) localHeapifyDown(heap []byte) (bool, int, error) {
 				if priorityLeftChild > priorityRightChild {
 					tempByteParents := make([]byte, len(parentBytes))
 					copy(tempByteParents, parentBytes)
-					copy(heap[(indexParent-1)*(STORAGE_NODE_SIZE_IN_BYTES):], leftChildBytes)
-					copy(heap[(indexLeftChild-1)*(STORAGE_NODE_SIZE_IN_BYTES):], tempByteParents)
+					copy(heap[(indexParent-1)*(queue.nodeSizeInBytes):], leftChildBytes)
+					copy(heap[(indexLeftChild-1)*(queue.nodeSizeInBytes):], tempByteParents)
 					indexParent = indexLeftChild
 				} else {
 					//Right child wins
 					tempByteParents := make([]byte, len(parentBytes))
 					copy(tempByteParents, parentBytes)
-					copy(heap[(indexParent-1)*(STORAGE_NODE_SIZE_IN_BYTES):], rightChildBytes)
-					copy(heap[(indexRightChild-1)*(STORAGE_NODE_SIZE_IN_BYTES):], tempByteParents)
+					copy(heap[(indexParent-1)*(queue.nodeSizeInBytes):], rightChildBytes)
+					copy(heap[(indexRightChild-1)*(queue.nodeSizeInBytes):], tempByteParents)
 					indexParent = indexRightChild
 				}
 			}
@@ -365,7 +321,7 @@ func (queue *KokaqCore) localHeapifyDown(heap []byte) (bool, int, error) {
 // If yes it will not make disk IO, else it will commit the previous page and load requested page from disk
 // If pageNumber is 0, it's special case: it will not load any page and will just commit the current page.
 // It's used to free up the space so before creating any new page in memory loadPage(0) should be called
-func (queue *KokaqCore) loadPage(pageNumber int) ([]byte, error) {
+func (queue *KokaqHeap) loadPage(pageNumber int) ([]byte, error) {
 	if pageNumber < 0 {
 		errMsg := "page number cannot be negative"
 		fmt.Println(errMsg)
@@ -380,7 +336,7 @@ func (queue *KokaqCore) loadPage(pageNumber int) ([]byte, error) {
 	//page is not loaded
 	//commit the page if it's not zero, since we are loading a new page
 	if queue.currentLoadedPageNumber != 0 {
-		startIndex := (queue.currentLoadedPageNumber - 1) * (STORAGE_SUBHEAP_SIZE_IN_BYTES)
+		startIndex := (queue.currentLoadedPageNumber - 1) * (queue.subheapSizeInBytes)
 		err := utils.WriteBytesToFile(queue.pagesPath, int64(startIndex), queue.currentLoadedPage)
 		if err != nil {
 			fmt.Println("Error saving page: ", queue.currentLoadedPageNumber, " to file: ", queue.pagesPath, err)
@@ -388,9 +344,9 @@ func (queue *KokaqCore) loadPage(pageNumber int) ([]byte, error) {
 		}
 	}
 	if pageNumber != 0 {
-		startIndex := (pageNumber - 1) * (STORAGE_SUBHEAP_SIZE_IN_BYTES)
+		startIndex := (pageNumber - 1) * (queue.subheapSizeInBytes)
 		var err error
-		queue.currentLoadedPage, err = utils.ReadBytesFromFile(queue.pagesPath, startIndex, STORAGE_SUBHEAP_SIZE_IN_BYTES)
+		queue.currentLoadedPage, err = utils.ReadBytesFromFile(queue.pagesPath, startIndex, queue.subheapSizeInBytes)
 		if err != nil {
 			fmt.Println("Error loading page: ", pageNumber, " from file: ", queue.pagesPath, err)
 			return nil, err
@@ -409,7 +365,7 @@ func (queue *KokaqCore) loadPage(pageNumber int) ([]byte, error) {
 // loadPage(0)          --> required to free up the space in RAM
 // create new page
 // commit new page
-func (queue *KokaqCore) saveNewPage(pageNumber int, data []byte) error {
+func (queue *KokaqHeap) saveNewPage(pageNumber int, data []byte) error {
 	if pageNumber < 1 {
 		errMsg := "page number cannot be less than 1"
 		fmt.Println(errMsg)
@@ -422,14 +378,14 @@ func (queue *KokaqCore) saveNewPage(pageNumber int, data []byte) error {
 }
 
 // Mapping functions
-func (queue *KokaqCore) getLocalHeapDetailsForNode(index int) (int, int, int) {
+func (queue *KokaqHeap) getLocalHeapDetailsForNode(index int) (int, int, int) {
 	globalLevel := bits.Len(uint(index)) - 1
 	nodesInGloablLevel := 1 << globalLevel
-	subHeapLevel := (globalLevel - 1) / (STORAGE_HEAP_MAX_SIZE - 1)
-	localLevel := ((globalLevel - 1) % (STORAGE_HEAP_MAX_SIZE - 1)) + 1
+	subHeapLevel := (globalLevel - 1) / (queue.heapMaxSize - 1)
+	localLevel := ((globalLevel - 1) % (queue.heapMaxSize - 1)) + 1
 	nodesInLocalLevel := 1 << localLevel
 	pPartial := (index - nodesInGloablLevel) / (nodesInLocalLevel)
-	pFull := (utils.Power(STORAGE_SUBHEAP_LAST_LAYER_NODES, subHeapLevel) - 1) / (STORAGE_SUBHEAP_LAST_LAYER_NODES - 1)
+	pFull := (utils.Power(queue.subheapLastLayerNodes, subHeapLevel) - 1) / (queue.subheapLastLayerNodes - 1)
 	p := pFull + pPartial + 1
 	localIndexFull := nodesInLocalLevel - 1
 	localIndexPartial := (index - nodesInGloablLevel) % nodesInLocalLevel
