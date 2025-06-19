@@ -30,19 +30,6 @@
 - 🧵 **Concurrency-aware**: Built to scale across distributed workers
 - 📦 **Modular**: Can be embedded into larger systems or composed into services
 
-## 📁 Package Structure
-
-```
-pkg/
-├── queue/ # Enqueue/dequeue interfaces and backends
-├── scheduler/ # Priority/fairness strategies (Pending)
-├── wireframe/ # Task models and serialization logic (Pending)
-└── utils/ # Utility methods 
-
-internal/
-├── profiler/ # CPU, mem, IO profilers
-└── metrics/ # Internal metrics helpers (no exporters) (Pending)
-```
 
 ## 🚀 Getting Started
 
@@ -53,9 +40,9 @@ Import and use in your server:
 
 ```go
 import (
-    "github.com/kokaq/core/pkg/queue"
+    "github.com/kokaq/core/queue"
 )
-queueNs, _ := queue.NewKokaq(namespaceId, queueId)
+queueNs, _ := queue.NewDefaultKokaq(namespaceId, queueId)
 err := queueNs.PushItem(queue.NewQueueItem(uuid.New(), priority))
 item, err := q.PopItem()
 ```
