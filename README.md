@@ -4,13 +4,13 @@
 
 `core` is the heart of `kokaq`, a distributed, cloud-native priority queue implementation. It provides the foundational logic and data structures for enabling true, weight-based prioritization across distributed systems.
 
-
 <!-- [![Go Reference](https://pkg.go.dev/badge/github.com/kokaq/core.svg)](https://pkg.go.dev/github.com/kokaq/core) -->
 <!-- [![Tests](https://github.com/kokaq/core/actions/workflows/test.yml/badge.svg)](https://github.com/kokaq/core/actions/workflows/test.yml) -->
 
 ## 🔍 What is core?
 
 `core` contains all domain logic for the `kokaq` platform:
+
 - Pluggable storage backends for task persistence
 - Scheduler strategies for priority and fairness
 - Task and message wireframe implementations
@@ -30,33 +30,49 @@
 - 🧵 **Concurrency-aware**: Built to scale across distributed workers
 - 📦 **Modular**: Can be embedded into larger systems or composed into services
 
-
 ## 🚀 Getting Started
 
 ```bash
 go get github.com/kokaq/core
 ```
+
 Import and use in your server:
 
 ```go
-import (
-    "github.com/kokaq/core/queue"
-)
-queueNs, _ := queue.NewDefaultKokaq(namespaceId, queueId)
-err := queueNs.PushItem(queue.NewQueueItem(uuid.New(), priority))
-item, err := q.PopItem()
+ns := queue.NewNamespace("./data/db", queue.NamespaceConfig{
+ NamespaceName: "data-db",
+ NamespaceId:   1,
+})
+
+logger.ConsoleLog("INFO", "Namespace created: #", ns.Id, ": ", ns.Name)
+
+qConfig := queue.QueueConfiguration{
+ QueueName:       "test-queue",
+ QueueId:         1,
+ EnableDLQ:       true,
+ EnableInvisible: true,
+}
+var q *queue.Queue
+var err error
+
+q, err = ns.AddQueue(&qConfig)
+var qi = &queue.QueueItem{
+ MessageId: uuid.New(),
+ Priority:  1,
+}
+
+err = q.Enqueue(qi)
+qi, err := q.Peek()
+qi, err := q.Dequeue()
+ns.DeleteQueue(1)
 ```
+
 For network server, see [server](https://github.com/kokaq/server).
 
 ## 🧪 Running Tests
 
 ```bash
 go test ./...
-go test -race ./...
-```
-To run benchmarks:
-```bash
-go test -bench=. ./pkg/queue
 ```
 
 ## 🧱 Contributing
@@ -66,4 +82,3 @@ Contributions welcome! Please see [CONTRIBUTING.md](./CONTRIBUTING.md) for code 
 ## 📜 License
 
 [MIT](./LICENSE) — open-source and production-ready.
-

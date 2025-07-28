@@ -2,274 +2,466 @@ package queue
 
 import (
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math/bits"
+	"path/filepath"
 
+	"github.com/google/uuid"
 	"github.com/kokaq/core/utils"
 )
 
-type KokaqHeap struct {
-	totalNodes              int
-	totalPages              int
-	currentLoadedPageNumber int
-	currentLoadedPage       []byte
-	pagesPath               string
-	heapMaxSize             int
-	prioritySizeInBytes     int
-	indexSizeInBytes        int
-	subheapLastLayerNodes   int
-	subheapNodes            int
-	nodeSizeInBytes         int
-	subheapSizeInBytes      int
+type HeapConfig struct {
+	PagesPath    string
+	IndexPath    string
+	heapMaxSize  int
+	prioritySize int
+	indexSize    int
+
+	nodeSize              int
+	subheapSize           int
+	subheapLastLayerNodes int
+	subheapNodes          int
+	messageIdSize         int
 }
 
-// Heap Public Functions
+type Heap struct {
+	totalNodes  int
+	totalPages  int
+	config      HeapConfig
+	currentPage *Page
+}
 
-func (queue *KokaqHeap) Push(node *HeapNode) error {
-	if queue.totalNodes == 0 {
-		queue.loadPage(0)
-		newPage := make([]byte, queue.subheapSizeInBytes)
-		newNode, err := serializeNode(node, queue.prioritySizeInBytes, queue.indexSizeInBytes, queue.nodeSizeInBytes)
-		if err != nil {
-			fmt.Println("Error serializing node", err)
-			return err
-		}
-		copy(newPage[:queue.nodeSizeInBytes], newNode)
-		queue.saveNewPage(1, newPage)
-	} else {
-		queue.pageHeapifyUp(queue.totalNodes+1, node)
+func NewHeap(parentDirectory string, heapMaxSize int, prioritySize int, indexSize int, messageIdSize int) (*Heap, error) {
+	var err error
+	var subheapNodes = (1 << heapMaxSize) - 1
+	indexpath := filepath.Join(parentDirectory, "indexes") // directory
+	pagesPath := filepath.Join(parentDirectory, "pages")   // file
+	if err = utils.EnsureDirectoryCreated(indexpath); err != nil {
+		return nil, fmt.Errorf("failed to create index directory %s: %w", indexpath, err)
 	}
-	queue.totalNodes += 1
+	if !utils.FileExists(pagesPath) {
+		if err = utils.EnsureFileCreated(pagesPath); err != nil {
+			return nil, fmt.Errorf("failed to create file %s: %w", pagesPath, err)
+		}
+		return &Heap{
+			totalNodes:  0,
+			totalPages:  0,
+			currentPage: NewPage(),
+			config: HeapConfig{
+				PagesPath:             pagesPath,
+				IndexPath:             indexpath,
+				messageIdSize:         messageIdSize,
+				heapMaxSize:           heapMaxSize,
+				prioritySize:          prioritySize,
+				indexSize:             indexSize,
+				nodeSize:              prioritySize + indexSize,
+				subheapSize:           (prioritySize + indexSize) * subheapNodes,
+				subheapLastLayerNodes: (1 << (heapMaxSize - 1)),
+				subheapNodes:          subheapNodes,
+			},
+		}, nil
+	} else {
+		cnt := 1
+		nodes := 0
+		pages := 0
+
+		for {
+			currPage, err := utils.ReadBytesFromFile(pagesPath, int64((cnt-1)*(prioritySize+indexSize)*subheapNodes), (prioritySize+indexSize)*subheapNodes)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read file %s: %w", pagesPath, err)
+			}
+			if len(currPage) == 0 {
+				break
+			}
+			nodesInPage := 0
+			for i := 1; i <= subheapNodes; i++ {
+				startIndex := (i - 1) * (prioritySize + indexSize)
+				length := (prioritySize + indexSize)
+				priority := int(binary.LittleEndian.Uint64(currPage[startIndex:length][:prioritySize]))
+				if priority == 0 || (i == 1 && cnt != 1) {
+					continue
+				}
+				nodesInPage++
+			}
+			nodes += nodesInPage
+			if nodesInPage > 0 {
+				pages++
+			}
+			cnt++
+		}
+
+		return &Heap{
+			totalNodes:  nodes,
+			totalPages:  pages,
+			currentPage: NewPage(),
+			config: HeapConfig{
+				PagesPath:             pagesPath,
+				IndexPath:             indexpath,
+				heapMaxSize:           heapMaxSize,
+				prioritySize:          prioritySize,
+				indexSize:             indexSize,
+				nodeSize:              prioritySize + indexSize,
+				subheapSize:           (prioritySize + indexSize) * subheapNodes,
+				subheapLastLayerNodes: (1 << (heapMaxSize - 1)),
+				subheapNodes:          subheapNodes,
+			},
+		}, nil
+	}
+}
+
+// Public Methods
+
+func (h *Heap) Enqueue(queueItem *QueueItem) error {
+	if queueItem.Priority == 0 {
+		return fmt.Errorf("priority cannot be zero")
+	}
+
+	indexPath := h.getIndexFilePath(queueItem.Priority)
+	if !utils.FileExists(indexPath) {
+		// if this is a new priority
+		// - add priority node to heap
+		// - heapify up
+		if h.totalNodes == 0 {
+			h.loadPage(0)
+			newPage := make([]byte, h.config.subheapSize)
+			binary.LittleEndian.PutUint64(newPage[0:], uint64(queueItem.Priority))
+			binary.LittleEndian.PutUint64(newPage[h.config.prioritySize:], uint64(0))
+			h.currentPage.SetData(1, newPage)
+			h.totalPages += 1
+		} else {
+			if h.totalNodes >= h.config.subheapLastLayerNodes {
+				return fmt.Errorf("heap is full, cannot enqueue more nodes")
+			}
+			h.heapifyUp(h.totalNodes+1, queueItem.Priority, 0)
+		}
+		h.totalNodes++
+	}
+	byteArray := queueItem.MessageId[:]
+	utils.AppendBytesToFile(indexPath, byteArray)
 	return nil
 }
 
-func (queue *KokaqHeap) Pop() (*HeapNode, error) {
-	if queue.totalNodes == 0 {
-		errMsg := "no nodes to pop"
-		fmt.Println(errMsg)
-		return nil, errors.New(errMsg)
+func (h *Heap) Dequeue() (*QueueItem, error) {
+	if err := h.loadPage(1); err != nil {
+		return nil, fmt.Errorf("failed to load page 1: %w", err)
 	}
-	if queue.totalNodes == 1 {
-		page, err := queue.loadPage(1)
-		if err != nil {
-			return nil, err
-		}
-
-		newEle := make([]byte, queue.nodeSizeInBytes)
-		oldEle, err := deserializeNode(page[:queue.nodeSizeInBytes], queue.prioritySizeInBytes)
-		if err != nil {
-			return nil, err
-		}
-		copy(page[:queue.nodeSizeInBytes], newEle)
-		queue.totalNodes -= 1
-		queue.totalPages -= 1
-		return oldEle, nil
+	priority := binary.LittleEndian.Uint64(h.currentPage.data[:h.config.prioritySize])
+	indexPos := binary.LittleEndian.Uint64(h.currentPage.data[h.config.prioritySize:])
+	indexPath := h.getIndexFilePath(priority)
+	offset := int64(indexPos) * int64(h.config.messageIdSize)
+	data, err := utils.ReadBytesFromFile(indexPath, offset, 2*h.config.messageIdSize)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read message id from index file: %w", err)
+	}
+	if itemId, err := uuid.FromBytes(data[:h.config.messageIdSize]); err != nil {
+		return nil, fmt.Errorf("failed to convert bytes to UUID: %w", err)
 	} else {
-		//Get top node
-		topNode, err := queue.Peek()
-		if err != nil {
-			return nil, err
+		if itemId == uuid.Nil {
+			return nil, fmt.Errorf("no item found for the given priority")
 		}
-		//Get last node and replace it with all zeros
-		pageNumber, localIndex, _ := queue.getLocalHeapDetailsForNode(queue.totalNodes)
-		page, err := queue.loadPage(pageNumber)
-		if err != nil {
-			return nil, err
+		nextItemId, err := uuid.FromBytes(data[h.config.messageIdSize:])
+		if err != nil && nextItemId == uuid.Nil {
+			if err := utils.EnsureFileDeleted(indexPath); err != nil {
+				return nil, fmt.Errorf("failed to delete index file %s: %w", indexPath, err)
+			}
+			// core
+			if h.totalNodes == 0 {
+				return nil, fmt.Errorf("no items in the heap")
+			}
+			if h.totalNodes == 1 {
+				if err = h.loadPage(1); err != nil {
+					return nil, fmt.Errorf("failed to load page 1: %w", err)
+				}
+				// priority1 := binary.LittleEndian.Uint64(h.currentPage.data[:h.config.prioritySize])
+				// indexPos1 := binary.LittleEndian.Uint64(h.currentPage.data[h.config.prioritySize:])
+				copy(h.currentPage.data[:h.config.nodeSize], make([]byte, h.config.nodeSize))
+				h.totalNodes -= 1
+				h.totalPages -= 1
+			} else {
+				if err := h.loadPage(1); err != nil {
+					return nil, fmt.Errorf("failed to load page 1: %w", err)
+				}
+				priority = binary.LittleEndian.Uint64(h.currentPage.data[:h.config.prioritySize])
+				indexPos = binary.LittleEndian.Uint64(h.currentPage.data[h.config.prioritySize:])
+
+				pageNumber, localIndex, _ := h.getLocalHeapDetailsForNode(h.totalNodes)
+				if err = h.loadPage(pageNumber); err != nil {
+					return nil, fmt.Errorf("failed to load page %d: %w", pageNumber, err)
+				}
+
+				startIndex := (localIndex - 1) * h.config.nodeSize
+				lpriority := binary.LittleEndian.Uint64(h.currentPage.data[startIndex : startIndex+h.config.prioritySize])
+				lindexPos := binary.LittleEndian.Uint64(h.currentPage.data[startIndex+h.config.prioritySize : startIndex+h.config.nodeSize])
+				copy(h.currentPage.data[startIndex:], make([]byte, h.config.nodeSize))
+				h.totalNodes -= 1
+				if localIndex == 2 && pageNumber != 1 {
+					h.totalPages -= 1
+					copy(h.currentPage.data[:h.config.nodeSize], make([]byte, h.config.nodeSize))
+				}
+				if err = h.heapifyDown(lpriority, lindexPos); err != nil {
+					return nil, fmt.Errorf("failed to heapify down after dequeue: %w", err)
+				}
+
+				return &QueueItem{
+					MessageId: itemId,
+					Priority:  priority,
+				}, nil
+			}
+		} else {
+			if err = h.setIndexOfPeekElement(int(indexPos + 1)); err != nil {
+				return nil, fmt.Errorf("failed to set index of peek element: %w", err)
+			}
 		}
-		startPoint := (localIndex - 1) * (queue.nodeSizeInBytes)
-		lastNode, err := deserializeNode(page[startPoint:startPoint+queue.nodeSizeInBytes], queue.prioritySizeInBytes)
-		if err != nil {
-			return nil, err
-		}
-		newNode := make([]byte, queue.nodeSizeInBytes)
-		copy(page[startPoint:], newNode)
-		queue.totalNodes -= 1
-		if localIndex == 2 && pageNumber != 1 {
-			queue.totalPages -= 1
-			//Remove the root node as well
-			copy(page[:queue.nodeSizeInBytes], newNode)
-		}
-		err = queue.pageHeapifyDown(lastNode)
-		if err != nil {
-			return nil, err
-		}
-		return topNode, nil
+
+		return &QueueItem{
+			MessageId: itemId,
+			Priority:  priority,
+		}, nil
 	}
 }
 
-func (queue *KokaqHeap) Peek() (*HeapNode, error) {
-	page, err := queue.loadPage(1)
-	if err != nil {
-		return nil, err
+func (h *Heap) IsEmpty() (bool, error) {
+	if err := h.loadPage(1); err != nil {
+		return true, nil
 	}
-	return deserializeNode(page[:queue.nodeSizeInBytes], queue.prioritySizeInBytes)
+	var priority uint64 = 0
+	var indexPos uint64 = 0
+
+	indexPath := h.getIndexFilePath(priority)
+	if len(h.currentPage.data) == 0 || !utils.FileExists(indexPath) {
+		return true, nil
+	}
+	priority = binary.LittleEndian.Uint64(h.currentPage.data[:h.config.prioritySize])
+	indexPos = binary.LittleEndian.Uint64(h.currentPage.data[h.config.prioritySize:])
+	var offset = int64(indexPos) * int64(h.config.messageIdSize)
+	data, err := utils.ReadBytesFromFile(indexPath, offset, h.config.messageIdSize)
+	if err != nil {
+		return false, fmt.Errorf("error reading indexfile")
+	}
+	itemId, err := uuid.FromBytes(data)
+	if err != nil {
+		return false, fmt.Errorf("messageid is not valid")
+	}
+	if itemId == uuid.Nil {
+		return true, nil
+	}
+	return false, nil
 }
 
-func (queue *KokaqHeap) SetIndexofPeekElement(index int) error {
-	page, err := queue.loadPage(1)
-	if err != nil {
-		return err
+func (h *Heap) Peek() (*QueueItem, error) {
+	if err := h.loadPage(1); err != nil {
+		return nil, fmt.Errorf("failed to load page 1: %w", err)
 	}
-	node, err := deserializeNode(page[:queue.nodeSizeInBytes], queue.prioritySizeInBytes)
+	var priority uint64 = 0
+	var indexPos uint64 = 0
+	priority = binary.LittleEndian.Uint64(h.currentPage.data[:h.config.prioritySize])
+	indexPos = binary.LittleEndian.Uint64(h.currentPage.data[h.config.prioritySize:])
+	indexPath := h.getIndexFilePath(priority)
+	data, err := utils.ReadBytesFromFile(indexPath, int64(indexPos)*int64(h.config.messageIdSize), h.config.messageIdSize)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to read message id from index file: %w", err)
 	}
+	if itemId, err := uuid.FromBytes(data); err != nil {
+		return nil, fmt.Errorf("failed to convert bytes to UUID: %w", err)
+	} else {
+		if itemId == uuid.Nil {
+			return nil, fmt.Errorf("no item found for the given priority")
+		}
+		queueItem := &QueueItem{
+			MessageId: itemId,
+			Priority:  priority,
+		}
+		return queueItem, nil
+	}
+}
 
-	node.Index = index
-	newNode, err := serializeNode(node, queue.prioritySizeInBytes, queue.indexSizeInBytes, queue.nodeSizeInBytes)
-	if err != nil {
-		return err
-	}
+func (h *Heap) GetConfig() HeapConfig {
+	return h.config
+}
 
-	copy(page[:queue.nodeSizeInBytes], newNode)
+// Internal Methods
+
+func (h *Heap) setIndexOfPeekElement(index int) error {
+	if err := h.loadPage(1); err != nil {
+		return fmt.Errorf("failed to load page 1: %w", err)
+	}
+	binary.LittleEndian.PutUint64(h.currentPage.data[h.config.prioritySize:], uint64(index))
 	return nil
 }
 
-// Heap Private Functions
+func (h *Heap) getIndexFilePath(priority uint64) string {
+	return filepath.Join(h.config.IndexPath, fmt.Sprint(priority))
+}
 
-func (queue *KokaqHeap) pageHeapifyUp(index int, node *HeapNode) error {
-	pageNumber, localIndex, _ := queue.getLocalHeapDetailsForNode(index)
+func (h *Heap) loadPage(pageNumber int) error {
+	if pageNumber < 0 {
+		return fmt.Errorf("invalid page number: %d", pageNumber)
+	}
+	if pageNumber != h.currentPage.index {
+		h.commitCurrentPage()
+		return h.loadIntoCurrentPage(pageNumber)
+	}
+	return nil
+}
+
+func (h *Heap) loadIntoCurrentPage(pageNumber int) error {
+	if pageNumber != 0 {
+		startIndex := (pageNumber - 1) * (h.config.subheapSize)
+		var err error
+		if h.currentPage.data, err = utils.ReadBytesFromFile(h.config.PagesPath, int64(startIndex), h.config.subheapSize); err != nil {
+			return fmt.Errorf("failed to read page %d: %w", pageNumber, err)
+		}
+		h.currentPage.index = pageNumber
+	} else {
+		h.currentPage.data = nil
+		h.currentPage.index = 0
+	}
+	return nil
+}
+
+func (h *Heap) commitCurrentPage() error {
+	if h.currentPage.index != 0 {
+		startIndex := (h.currentPage.index - 1) * (h.config.subheapSize)
+		if err := utils.WriteBytesToFile(h.config.PagesPath, int64(startIndex), h.currentPage.data); err != nil {
+			return fmt.Errorf("failed to commit page %d: %w", h.currentPage.index, err)
+		}
+	}
+	return nil
+}
+
+func (h *Heap) heapifyUp(heapIndex int, priority uint64, index uint64) error {
+	pageNumber, localIndex, _ := h.getLocalHeapDetailsForNode(heapIndex)
 	if localIndex == 2 && pageNumber != 1 {
-		//This is the first element in the new page, root node will be there in the parent page, load it and then move forward
-		parentIndex := index / 2
-		pageOfParent, localIndexOfParent, _ := queue.getLocalHeapDetailsForNode(parentIndex)
-		page, err := queue.loadPage(pageOfParent)
-		if err != nil {
-			fmt.Println("Error loading page: ", pageOfParent, " in file: ", queue.pagesPath, err)
-			return err
+		// This is the first element in the new page,
+		// root node will be there in the parent page,
+		// load it and then move forward
+		parentIndex := heapIndex / 2
+		pageOfParent, localIndexOfParent, _ := h.getLocalHeapDetailsForNode(parentIndex)
+		if err := h.loadPage(pageOfParent); err != nil {
+			return fmt.Errorf("failed to load parent page %d: %w", pageOfParent, err)
 		}
-		rootNode := page[(localIndexOfParent-1)*(queue.nodeSizeInBytes) : (localIndexOfParent)*(queue.nodeSizeInBytes)]
-		_, err = queue.loadPage(0)
-		if err != nil {
-			fmt.Println("Error loading page: 0 in file: ", queue.pagesPath, err)
-			return err
+		rootNode := h.currentPage.data[(localIndexOfParent-1)*(h.config.nodeSize) : (localIndexOfParent)*(h.config.nodeSize)]
+		if err := h.loadPage(0); err != nil {
+			return fmt.Errorf("failed to load current page %d: %w", 0, err)
 		}
-		newPage := make([]byte, queue.subheapSizeInBytes)
-		copy(newPage[:queue.nodeSizeInBytes], rootNode)
-		queue.saveNewPage(pageNumber, newPage)
+		newPage := make([]byte, h.config.subheapSize)
+		copy(newPage[:h.config.nodeSize], rootNode)
+		h.currentPage.SetData(pageNumber, newPage)
 	}
 
 	//Fake conditions to perform first executions irrespective of anything
 	needToGoUp := true
 	previousPage := 0
 	for needToGoUp {
-		pageNumber, localIndex, localLevel := queue.getLocalHeapDetailsForNode(index)
-		page, err := queue.loadPage(pageNumber)
-		if err != nil {
-			fmt.Println("Error loading page: ", pageNumber, " in file: ", queue.pagesPath, err)
-			return err
+		pageNumber, localIndex, localLevel := h.getLocalHeapDetailsForNode(heapIndex)
+		if err := h.loadPage(pageNumber); err != nil {
+			return fmt.Errorf("failed to load page %d: %w", pageNumber, err)
 		}
-		startPoint := (localIndex - 1) * (queue.nodeSizeInBytes)
-		nodeContent, err := serializeNode(node, queue.prioritySizeInBytes, queue.indexSizeInBytes, queue.nodeSizeInBytes)
-		if err != nil {
-			fmt.Println("Error serializing node", err)
-			return err
-		}
-		copy(page[startPoint:], nodeContent)
-		needToGoUp, err = queue.localHeapifyUp(localIndex, page)
-		if err != nil {
-			return err
-		}
+		startIndex := (localIndex - 1) * h.config.nodeSize
 
-		//Change the root node of previous page
-		//------Anti-pattern code------
-		// Here we are directly going to previous page and changing the root node, every operation should be doen by loading page
-		// Here, we are sure that page is synced in meomry, to reduce disk I/O this has been done
+		newPage := make([]byte, h.config.nodeSize)
+		binary.LittleEndian.PutUint64(newPage[0:], uint64(priority))
+		binary.LittleEndian.PutUint64(newPage[h.config.prioritySize:], uint64(index))
+		copy(h.currentPage.data[startIndex:], newPage)
+
+		needToGoUp = h.localHeapifyUp(localIndex)
+
 		if previousPage != 0 {
-			utils.WriteBytesToFile(queue.pagesPath, int64((previousPage-1)*(queue.subheapSizeInBytes)), page[startPoint:startPoint+queue.nodeSizeInBytes])
+			offset := int64((previousPage - 1) * (h.config.subheapSize))
+			_data := h.currentPage.data[startIndex : startIndex+h.config.nodeSize]
+			utils.WriteBytesToFile(h.config.PagesPath, offset, _data)
 		}
-		//If first sub heap no need to go up
 		if pageNumber == 1 {
+			// If first sub heap no need to go up
 			break
 		}
 		//Change parametes for next iterations
-		index = index >> localLevel
+		heapIndex = heapIndex >> localLevel
 		previousPage = pageNumber
 	}
 	return nil
 }
 
-func (queue *KokaqHeap) localHeapifyUp(index int, heap []byte) (bool, error) {
+func (h *Heap) localHeapifyUp(index int) bool {
 	indexChild := index
 	for indexChild > 1 {
-		startPointChild := (indexChild - 1) * (queue.nodeSizeInBytes)
-		bytesChild := heap[startPointChild : startPointChild+queue.nodeSizeInBytes]
-		priorityChild := binary.LittleEndian.Uint64(bytesChild[:queue.prioritySizeInBytes])
+		startPointChild := (indexChild - 1) * (h.config.nodeSize)
+		bytesChild := h.currentPage.data[startPointChild : startPointChild+h.config.nodeSize]
+		priorityChild := binary.LittleEndian.Uint64(bytesChild[:h.config.prioritySize])
 
 		indexParent := indexChild / 2
-		startPointParent := (indexParent - 1) * (queue.nodeSizeInBytes)
-		bytesParent := heap[startPointParent : startPointParent+queue.nodeSizeInBytes]
-		priorityParent := binary.LittleEndian.Uint64(bytesParent[:queue.prioritySizeInBytes])
+
+		startPointParent := (indexParent - 1) * (h.config.nodeSize)
+		bytesParent := h.currentPage.data[startPointParent : startPointParent+h.config.nodeSize]
+		priorityParent := binary.LittleEndian.Uint64(bytesParent[:h.config.prioritySize])
 
 		// TODO: Priority comparison should be configurable
 		if priorityChild > priorityParent {
 			tempByteParents := make([]byte, len(bytesParent))
 			copy(tempByteParents, bytesParent)
-			copy(heap[startPointParent:], bytesChild)
-			copy(heap[startPointChild:], tempByteParents)
+			copy(h.currentPage.data[startPointParent:], bytesChild)
+			copy(h.currentPage.data[startPointChild:], tempByteParents)
 		} else {
-			return false, nil
+			return false
 		}
 		indexChild = indexChild / 2
 	}
-	return true, nil
+	return true
 }
 
-func (queue *KokaqHeap) pageHeapifyDown(node *HeapNode) error {
+func (h *Heap) heapifyDown(priority uint64, index uint64) error {
 	needToGoDown := true
 	pageNumber := 1
 	previousPage := 0
 	previousIndex := 0
 	lastLayerIndex := 0
 	for needToGoDown {
-		page, err := queue.loadPage(pageNumber)
-		if err != nil {
-			return err
-		}
-		newNode, err := serializeNode(node, queue.prioritySizeInBytes, queue.indexSizeInBytes, queue.nodeSizeInBytes)
-		if err != nil {
-			return err
-		}
-		copy(page[:queue.nodeSizeInBytes], newNode)
-		needToGoDown, lastLayerIndex, err = queue.localHeapifyDown(page)
-		if err != nil {
-			return err
-		}
-		//If second iteration change the last layer node of previous page
-		//------Anti-pattern code------
-		// Here we are directly going to previous page and changing the last layer node, every operation should be doen by loading page
-		// Here, we are sure that page is synced in meomry, to reduce disk I/O this has been done
-		if previousPage != 0 {
-			utils.WriteBytesToFile(queue.pagesPath, int64((previousPage-1)*(queue.subheapSizeInBytes)+(previousIndex-1)*(queue.nodeSizeInBytes)), page[:queue.nodeSizeInBytes])
+		var err error
+		if err = h.loadPage(pageNumber); err != nil {
+			return fmt.Errorf("failed to load page %d: %w", pageNumber, err)
 		}
 
-		//Change parametes for next iterations
+		binary.LittleEndian.PutUint64(h.currentPage.data[:h.config.prioritySize], priority)
+		binary.LittleEndian.PutUint64(h.currentPage.data[h.config.prioritySize:], index)
+		if needToGoDown, lastLayerIndex, err = h.localHeapifyDown(); err != nil {
+			return fmt.Errorf("failed to heapify down: %w", err)
+		}
+
+		//If second iteration change the last layer node of previous page
+		//------Anti-pattern code------
+		// Here we are directly going to previous page and changing the last layer node,
+		// every operation should be done by loading page
+		// Here, we are sure that page is synced in meomry,
+		//  to reduce disk I/O this has been done
+
+		if previousPage != 0 {
+			var offset = int64((previousPage-1)*(h.config.subheapSize) + (previousIndex-1)*(h.config.nodeSize))
+			utils.WriteBytesToFile(h.config.PagesPath, offset, h.currentPage.data[:h.config.nodeSize])
+		}
 		previousPage = pageNumber
 		previousIndex = lastLayerIndex
 
-		//Next page number which needs to be loaded based on current page we are on and last layer index
-		pageNumber = (queue.subheapLastLayerNodes)*(pageNumber-1) + (lastLayerIndex - queue.subheapLastLayerNodes + 1) + 1
+		pageNumber = (h.config.subheapLastLayerNodes)*(pageNumber-1) + (lastLayerIndex - h.config.subheapLastLayerNodes + 1) + 1
 
-		//If no pages available, no need to go down
-		if pageNumber > queue.totalPages {
+		if pageNumber > h.totalPages {
 			break
 		}
 	}
 	return nil
 }
 
-func (queue *KokaqHeap) localHeapifyDown(heap []byte) (bool, int, error) {
+func (h *Heap) localHeapifyDown() (bool, int, error) {
 	indexParent := 1
-	for indexParent < queue.subheapLastLayerNodes {
-		parentBytes := heap[(indexParent-1)*(queue.nodeSizeInBytes) : (indexParent)*(queue.nodeSizeInBytes)]
-		priorityParent := binary.LittleEndian.Uint64(parentBytes[:queue.prioritySizeInBytes])
+
+	for indexParent < h.config.subheapLastLayerNodes {
+		parentBytes := h.currentPage.data[(indexParent-1)*(h.config.nodeSize) : (indexParent)*(h.config.nodeSize)]
+		priorityParent := binary.LittleEndian.Uint64(parentBytes[:h.config.prioritySize])
 		indexLeftChild := indexParent * 2
 		indexRightChild := indexLeftChild + 1
-		leftChildBytes := heap[(indexLeftChild-1)*(queue.nodeSizeInBytes) : (indexLeftChild)*(queue.nodeSizeInBytes)]
-		rightChildBytes := heap[(indexRightChild-1)*(queue.nodeSizeInBytes) : (indexRightChild)*(queue.nodeSizeInBytes)]
-		priorityLeftChild := binary.LittleEndian.Uint64(leftChildBytes[:queue.prioritySizeInBytes])
-		priorityRightChild := binary.LittleEndian.Uint64(rightChildBytes[:queue.prioritySizeInBytes])
+		leftChildBytes := h.currentPage.data[(indexLeftChild-1)*(h.config.nodeSize) : (indexLeftChild)*(h.config.nodeSize)]
+		rightChildBytes := h.currentPage.data[(indexRightChild-1)*(h.config.nodeSize) : (indexRightChild)*(h.config.nodeSize)]
+		priorityLeftChild := binary.LittleEndian.Uint64(leftChildBytes[:h.config.prioritySize])
+		priorityRightChild := binary.LittleEndian.Uint64(rightChildBytes[:h.config.prioritySize])
 
 		//None of the childern exist, so no need to go further
 		if priorityLeftChild == 0 && priorityRightChild == 0 {
@@ -286,8 +478,8 @@ func (queue *KokaqHeap) localHeapifyDown(heap []byte) (bool, int, error) {
 			} else {
 				tempByteParents := make([]byte, len(parentBytes))
 				copy(tempByteParents, parentBytes)
-				copy(heap[(indexParent-1)*(queue.nodeSizeInBytes):], leftChildBytes)
-				copy(heap[(indexLeftChild-1)*(queue.nodeSizeInBytes):], tempByteParents)
+				copy(h.currentPage.data[(indexParent-1)*(h.config.nodeSize):], leftChildBytes)
+				copy(h.currentPage.data[(indexLeftChild-1)*(h.config.nodeSize):], tempByteParents)
 				return false, indexLeftChild, nil
 			}
 		} else {
@@ -302,15 +494,15 @@ func (queue *KokaqHeap) localHeapifyDown(heap []byte) (bool, int, error) {
 				if priorityLeftChild > priorityRightChild {
 					tempByteParents := make([]byte, len(parentBytes))
 					copy(tempByteParents, parentBytes)
-					copy(heap[(indexParent-1)*(queue.nodeSizeInBytes):], leftChildBytes)
-					copy(heap[(indexLeftChild-1)*(queue.nodeSizeInBytes):], tempByteParents)
+					copy(h.currentPage.data[(indexParent-1)*(h.config.nodeSize):], leftChildBytes)
+					copy(h.currentPage.data[(indexLeftChild-1)*(h.config.nodeSize):], tempByteParents)
 					indexParent = indexLeftChild
 				} else {
 					//Right child wins
 					tempByteParents := make([]byte, len(parentBytes))
 					copy(tempByteParents, parentBytes)
-					copy(heap[(indexParent-1)*(queue.nodeSizeInBytes):], rightChildBytes)
-					copy(heap[(indexRightChild-1)*(queue.nodeSizeInBytes):], tempByteParents)
+					copy(h.currentPage.data[(indexParent-1)*(h.config.nodeSize):], rightChildBytes)
+					copy(h.currentPage.data[(indexRightChild-1)*(h.config.nodeSize):], tempByteParents)
 					indexParent = indexRightChild
 				}
 			}
@@ -319,77 +511,14 @@ func (queue *KokaqHeap) localHeapifyDown(heap []byte) (bool, int, error) {
 	return true, indexParent, nil
 }
 
-// Disk IO functions
-// TODO: Mark it as critical section
-// Load page will first check whether that page is there is the cached property or not
-// If yes it will not make disk IO, else it will commit the previous page and load requested page from disk
-// If pageNumber is 0, it's special case: it will not load any page and will just commit the current page.
-// It's used to free up the space so before creating any new page in memory loadPage(0) should be called
-func (queue *KokaqHeap) loadPage(pageNumber int) ([]byte, error) {
-	if pageNumber < 0 {
-		errMsg := "page number cannot be negative"
-		fmt.Println(errMsg)
-		return nil, errors.New(errMsg)
-	}
-
-	//page is already loaded
-	if queue.currentLoadedPageNumber == pageNumber {
-		return queue.currentLoadedPage, nil
-	}
-
-	//page is not loaded
-	//commit the page if it's not zero, since we are loading a new page
-	if queue.currentLoadedPageNumber != 0 {
-		startIndex := (queue.currentLoadedPageNumber - 1) * (queue.subheapSizeInBytes)
-		err := utils.WriteBytesToFile(queue.pagesPath, int64(startIndex), queue.currentLoadedPage)
-		if err != nil {
-			fmt.Println("Error saving page: ", queue.currentLoadedPageNumber, " to file: ", queue.pagesPath, err)
-			return nil, err
-		}
-	}
-	if pageNumber != 0 {
-		startIndex := (pageNumber - 1) * (queue.subheapSizeInBytes)
-		var err error
-		queue.currentLoadedPage, err = utils.ReadBytesFromFile(queue.pagesPath, startIndex, queue.subheapSizeInBytes)
-		if err != nil {
-			fmt.Println("Error loading page: ", pageNumber, " from file: ", queue.pagesPath, err)
-			return nil, err
-		}
-		queue.currentLoadedPageNumber = pageNumber
-	} else {
-		queue.currentLoadedPage = nil
-		queue.currentLoadedPageNumber = 0
-	}
-	return queue.currentLoadedPage, nil
-}
-
-// It will save the given page (THIS SAVE IS IN MEMORY ONLY, NOT ON DISK)
-// TODO: Mark it as critical section
-// It's caller's responsibility to first save the original page, then create a new page and commit
-// loadPage(0)          --> required to free up the space in RAM
-// create new page
-// commit new page
-func (queue *KokaqHeap) saveNewPage(pageNumber int, data []byte) error {
-	if pageNumber < 1 {
-		errMsg := "page number cannot be less than 1"
-		fmt.Println(errMsg)
-		return errors.New(errMsg)
-	}
-	queue.currentLoadedPage = data
-	queue.currentLoadedPageNumber = pageNumber
-	queue.totalPages += 1
-	return nil
-}
-
-// Mapping functions
-func (queue *KokaqHeap) getLocalHeapDetailsForNode(index int) (int, int, int) {
+func (h *Heap) getLocalHeapDetailsForNode(index int) (int, int, int) {
 	globalLevel := bits.Len(uint(index)) - 1
 	nodesInGloablLevel := 1 << globalLevel
-	subHeapLevel := (globalLevel - 1) / (queue.heapMaxSize - 1)
-	localLevel := ((globalLevel - 1) % (queue.heapMaxSize - 1)) + 1
+	subHeapLevel := (globalLevel - 1) / (h.config.heapMaxSize - 1)
+	localLevel := ((globalLevel - 1) % (h.config.heapMaxSize - 1)) + 1
 	nodesInLocalLevel := 1 << localLevel
 	pPartial := (index - nodesInGloablLevel) / (nodesInLocalLevel)
-	pFull := (utils.Power(queue.subheapLastLayerNodes, subHeapLevel) - 1) / (queue.subheapLastLayerNodes - 1)
+	pFull := (utils.Power(h.config.subheapLastLayerNodes, subHeapLevel) - 1) / (h.config.subheapLastLayerNodes - 1)
 	p := pFull + pPartial + 1
 	localIndexFull := nodesInLocalLevel - 1
 	localIndexPartial := (index - nodesInGloablLevel) % nodesInLocalLevel
