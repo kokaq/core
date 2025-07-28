@@ -145,6 +145,9 @@ func (h *Heap) Dequeue() (*QueueItem, error) {
 	if err := h.loadPage(1); err != nil {
 		return nil, fmt.Errorf("failed to load page 1: %w", err)
 	}
+	if len(h.currentPage.data) < (h.config.prioritySize + h.config.indexSize) {
+		return nil, fmt.Errorf("heap is empty")
+	}
 	priority := binary.LittleEndian.Uint64(h.currentPage.data[:h.config.prioritySize])
 	indexPos := binary.LittleEndian.Uint64(h.currentPage.data[h.config.prioritySize:])
 	indexPath := h.getIndexFilePath(priority)

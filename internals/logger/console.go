@@ -21,11 +21,11 @@ const colorReset = "\033[0m"
 
 func ConsoleLog(level string, format string, args ...any) {
 	// Get caller info
-	pc, file, line, ok := runtime.Caller(1)
+	pc, _, _, ok := runtime.Caller(1)
 
 	var (
 		methodName = "unknown"
-		location   = "unknown"
+		//location   = "unknown"
 	)
 
 	if ok {
@@ -35,12 +35,23 @@ func ConsoleLog(level string, format string, args ...any) {
 			fullName := fn.Name()
 			methodName = filepath.Ext(fullName)[1:] // remove leading dot
 		}
-		location = fmt.Sprintf("%s:%d", filepath.Base(file), line)
+		//location = fmt.Sprintf("%s:%d", filepath.Base(file), line)
 	}
 
 	// Format timestamp and message
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
-	message := fmt.Sprintf(format, args...)
+	// Safe message formatting
+	var message string
+	if strings.Contains(format, "%") {
+		// Use Sprintf only if formatting directives are present
+		message = fmt.Sprintf(format, args...)
+	} else {
+		// Otherwise concatenate all args
+		message = format
+		if len(args) > 0 {
+			message += " " + fmt.Sprint(args...)
+		}
+	}
 
 	// Color based on level
 	levelUpper := strings.ToUpper(level)
@@ -49,12 +60,12 @@ func ConsoleLog(level string, format string, args ...any) {
 		color = "\033[37m" // Default: white
 	}
 	// Final log output
-	fmt.Printf("[%s] [%s] [%s] [%s] [%s] %s\n",
+	fmt.Printf("[%s] [%s] [%s] [%s] %s\n",
 		timestamp[:10], // [DATE]
 		timestamp[11:], // [TIME]
-		methodName,     // [METHOD]
 		levelUpper,     // [LEVEL]
-		location,       // [FILE:LINE]
-		message,        // MESSAGE
+		methodName,     // [METHOD]
+		//location,       // [FILE:LINE]
+		message, // MESSAGE
 	)
 }
