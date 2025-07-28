@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/kokaq/core/profiler"
+	"github.com/kokaq/core/internals/profiler"
 	"github.com/kokaq/core/queue"
 )
 
