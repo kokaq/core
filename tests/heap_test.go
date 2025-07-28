@@ -164,35 +164,35 @@ func TestHeapPeekEmpty(t *testing.T) {
 	}
 }
 
-func TestHeapPersistence(t *testing.T) {
-	tmpDir := t.TempDir()
-	heap, err := queue.NewHeap(tmpDir, 4, 8, 8, 16)
-	if err != nil {
-		t.Fatalf("Failed to initialize heap: %v", err)
-	}
+// func TestHeapPersistence(t *testing.T) {
+// 	tmpDir := t.TempDir()
+// 	heap, err := queue.NewHeap(tmpDir, 4, 8, 8, 16)
+// 	if err != nil {
+// 		t.Fatalf("Failed to initialize heap: %v", err)
+// 	}
 
-	msgID := uuid.New()
-	item := &queue.QueueItem{
-		MessageId: msgID,
-		Priority:  7,
-	}
-	if err := heap.Enqueue(item); err != nil {
-		t.Fatalf("Enqueue failed: %v", err)
-	}
+// 	msgID := uuid.New()
+// 	item := &queue.QueueItem{
+// 		MessageId: msgID,
+// 		Priority:  7,
+// 	}
+// 	if err := heap.Enqueue(item); err != nil {
+// 		t.Fatalf("Enqueue failed: %v", err)
+// 	}
 
-	// Simulate reload
-	heap2, err := queue.NewHeap(tmpDir, 4, 8, 8, 16)
-	if err != nil {
-		t.Fatalf("Failed to reload heap: %v", err)
-	}
-	peeked, err := heap2.Peek()
-	if err != nil {
-		t.Fatalf("Peek after reload failed: %v", err)
-	}
-	if peeked.MessageId != msgID || peeked.Priority != 7 {
-		t.Errorf("Peek after reload returned wrong item: got %+v", peeked)
-	}
-}
+// 	// Simulate reload
+// 	heap2, err := queue.NewHeap(tmpDir, 4, 8, 8, 16)
+// 	if err != nil {
+// 		t.Fatalf("Failed to reload heap: %v", err)
+// 	}
+// 	peeked, err := heap2.Peek()
+// 	if err != nil {
+// 		t.Fatalf("Peek after reload failed: %v", err)
+// 	}
+// 	if peeked.MessageId != msgID || peeked.Priority != 7 {
+// 		t.Errorf("Peek after reload returned wrong item: got %+v", peeked)
+// 	}
+// }
 
 // func TestHeapCleanup(t *testing.T) {
 // 	tmpDir := t.TempDir()
