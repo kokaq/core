@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/google/uuid"
-	"github.com/kokaq/core/internals/logger"
 	"github.com/kokaq/core/queue"
 )
 
@@ -12,9 +11,6 @@ func main() {
 		NamespaceName: "data-db",
 		NamespaceId:   1,
 	})
-
-	logger.ConsoleLog("INFO", "Namespace created: #", ns.Id, ": ", ns.Name)
-
 	qConfig := queue.QueueConfiguration{
 		QueueName:       "test-queue",
 		QueueId:         1,
@@ -22,75 +18,32 @@ func main() {
 		EnableInvisible: true,
 	}
 	var q *queue.Queue
-	var err error
-
-	if q, err = ns.AddQueue(&qConfig); err != nil {
-		logger.ConsoleLog("ERROR", "Error adding queue:", err)
-	} else {
-		logger.ConsoleLog("INFO", "Queue added: #", q.Id, ": ", q.Name)
-	}
-
+	q, _ = ns.AddQueue(&qConfig)
 	// if empty, _ := q.IsEmpty(); empty {
 	// 	fmt.Println("Queue is Empty")
 	// }
-
 	var qi = &queue.QueueItem{
 		MessageId: uuid.New(),
 		Priority:  1,
 	}
-
-	if err = q.Enqueue(qi); err != nil {
-		logger.ConsoleLog("ERROR", "Error enqueuing item:", err)
-	} else {
-		logger.ConsoleLog("INFO", "Enqueued item:", qi.MessageId, "with priority", qi.Priority)
-	}
-
+	_ = q.Enqueue(qi)
 	qi = &queue.QueueItem{
 		MessageId: uuid.New(),
 		Priority:  2,
 	}
-	if err = q.Enqueue(qi); err != nil {
-		logger.ConsoleLog("ERROR", "Error enqueuing item:", err)
-	} else {
-		logger.ConsoleLog("INFO", "Enqueued item:", qi.MessageId, "with priority", qi.Priority)
-	}
-
+	_ = q.Enqueue(qi)
 	qi = &queue.QueueItem{
 		MessageId: uuid.New(),
 		Priority:  2,
 	}
-	if err = q.Enqueue(qi); err != nil {
-		logger.ConsoleLog("ERROR", "Error enqueuing item:", err)
-	} else {
-		logger.ConsoleLog("INFO", "Enqueued item:", qi.MessageId, "with priority", qi.Priority)
-	}
-
+	_ = q.Enqueue(qi)
 	qi = &queue.QueueItem{
 		MessageId: uuid.New(),
 		Priority:  3,
 	}
-	if err = q.Enqueue(qi); err != nil {
-		logger.ConsoleLog("ERROR", "Error enqueuing item:", err)
-	} else {
-		logger.ConsoleLog("INFO", "Enqueued item:", qi.MessageId, "with priority", qi.Priority)
-	}
-
-	if qi, err := q.Dequeue(); err != nil {
-		logger.ConsoleLog("INFO", "Error dequeuing item:", err)
-	} else {
-		logger.ConsoleLog("INFO", "Dequeued item:", qi.MessageId, "with priority", qi.Priority)
-	}
-
-	if qi, err := q.Dequeue(); err != nil {
-		logger.ConsoleLog("INFO", "Error dequeuing item:", err)
-	} else {
-		logger.ConsoleLog("INFO", "Dequeued item:", qi.MessageId, "with priority", qi.Priority)
-	}
-
-	if qi, err := q.Peek(); err != nil {
-		logger.ConsoleLog("INFO", "Error peeking item:", err)
-	} else {
-		logger.ConsoleLog("INFO", "Peeked item:", qi.MessageId, "with priority", qi.Priority)
-	}
+	_ = q.Enqueue(qi)
+	q.Dequeue()
+	q.Dequeue()
+	q.Peek()
 	ns.DeleteQueue(1)
 }
