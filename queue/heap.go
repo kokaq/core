@@ -255,6 +255,9 @@ func (h *Heap) Peek() (*QueueItem, error) {
 	if err := h.loadPage(1); err != nil {
 		return nil, fmt.Errorf("failed to load page 1: %w", err)
 	}
+	if len(h.currentPage.data) < (h.config.prioritySize + h.config.indexSize) {
+		return nil, fmt.Errorf("heap is empty")
+	}
 	var priority uint64 = 0
 	var indexPos uint64 = 0
 	priority = binary.LittleEndian.Uint64(h.currentPage.data[:h.config.prioritySize])
