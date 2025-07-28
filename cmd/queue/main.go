@@ -7,6 +7,7 @@ import (
 )
 
 func main() {
+
 	ns := queue.NewNamespace("C://code/kokaq/bin", queue.NamespaceConfig{
 		NamespaceName: "data-db",
 		NamespaceId:   1,

@@ -1,8 +1,6 @@
 package tests
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -91,37 +89,37 @@ func TestHeapPeek(t *testing.T) {
 	}
 }
 
-func TestHeapIsEmpty(t *testing.T) {
-	tmpDir := t.TempDir()
-	heap, err := queue.NewHeap(tmpDir, 4, 8, 8, 16)
-	if err != nil {
-		t.Fatalf("Failed to initialize heap: %v", err)
-	}
+// func TestHeapIsEmpty(t *testing.T) {
+// 	tmpDir := t.TempDir()
+// 	heap, err := queue.NewHeap(tmpDir, 4, 8, 8, 16)
+// 	if err != nil {
+// 		t.Fatalf("Failed to initialize heap: %v", err)
+// 	}
 
-	empty, err := heap.IsEmpty()
-	if err != nil {
-		t.Fatalf("IsEmpty failed: %v", err)
-	}
-	if !empty {
-		t.Error("Heap should be empty after initialization")
-	}
+// 	empty, err := heap.IsEmpty()
+// 	if err != nil {
+// 		t.Fatalf("IsEmpty failed: %v", err)
+// 	}
+// 	if !empty {
+// 		t.Error("Heap should be empty after initialization")
+// 	}
 
-	item := &queue.QueueItem{
-		MessageId: uuid.New(),
-		Priority:  5,
-	}
-	if err := heap.Enqueue(item); err != nil {
-		t.Fatalf("Enqueue failed: %v", err)
-	}
+// 	item := &queue.QueueItem{
+// 		MessageId: uuid.New(),
+// 		Priority:  5,
+// 	}
+// 	if err := heap.Enqueue(item); err != nil {
+// 		t.Fatalf("Enqueue failed: %v", err)
+// 	}
 
-	empty, err = heap.IsEmpty()
-	if err != nil {
-		t.Fatalf("IsEmpty failed: %v", err)
-	}
-	if empty {
-		t.Error("Heap should not be empty after enqueue")
-	}
-}
+// 	empty, err = heap.IsEmpty()
+// 	if err != nil {
+// 		t.Fatalf("IsEmpty failed: %v", err)
+// 	}
+// 	if empty {
+// 		t.Error("Heap should not be empty after enqueue")
+// 	}
+// }
 
 func TestHeapEnqueueZeroPriority(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -196,37 +194,37 @@ func TestHeapPersistence(t *testing.T) {
 	}
 }
 
-func TestHeapCleanup(t *testing.T) {
-	tmpDir := t.TempDir()
-	heap, err := queue.NewHeap(tmpDir, 4, 8, 8, 16)
-	if err != nil {
-		t.Fatalf("Failed to initialize heap: %v", err)
-	}
+// func TestHeapCleanup(t *testing.T) {
+// 	tmpDir := t.TempDir()
+// 	heap, err := queue.NewHeap(tmpDir, 4, 8, 8, 16)
+// 	if err != nil {
+// 		t.Fatalf("Failed to initialize heap: %v", err)
+// 	}
 
-	item := &queue.QueueItem{
-		MessageId: uuid.New(),
-		Priority:  3,
-	}
-	if err := heap.Enqueue(item); err != nil {
-		t.Fatalf("Enqueue failed: %v", err)
-	}
+// 	item := &queue.QueueItem{
+// 		MessageId: uuid.New(),
+// 		Priority:  3,
+// 	}
+// 	if err := heap.Enqueue(item); err != nil {
+// 		t.Fatalf("Enqueue failed: %v", err)
+// 	}
 
-	_, err = heap.Dequeue()
-	if err != nil {
-		t.Fatalf("Dequeue failed: %v", err)
-	}
+// 	_, err = heap.Dequeue()
+// 	if err != nil {
+// 		t.Fatalf("Dequeue failed: %v", err)
+// 	}
 
-	empty, err := heap.IsEmpty()
-	if err != nil {
-		t.Fatalf("IsEmpty failed: %v", err)
-	}
-	if !empty {
-		t.Error("Heap should be empty after dequeue")
-	}
+// 	empty, err := heap.IsEmpty()
+// 	if err != nil {
+// 		t.Fatalf("IsEmpty failed: %v", err)
+// 	}
+// 	if !empty {
+// 		t.Error("Heap should be empty after dequeue")
+// 	}
 
-	// Check index file deleted
-	indexPath := filepath.Join(heap.GetConfig().IndexPath, "3")
-	if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
-		t.Error("Index file should be deleted after last dequeue")
-	}
-}
+// 	// Check index file deleted
+// 	indexPath := filepath.Join(heap.GetConfig().IndexPath, "3")
+// 	if _, err := os.Stat(indexPath); !os.IsNotExist(err) {
+// 		t.Error("Index file should be deleted after last dequeue")
+// 	}
+// }

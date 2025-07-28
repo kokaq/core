@@ -231,8 +231,13 @@ func (h *Heap) IsEmpty() (bool, error) {
 	var indexPos uint64 = 0
 
 	indexPath := h.getIndexFilePath(priority)
-	if len(h.currentPage.data) == 0 || !utils.FileExists(indexPath) {
-		return true, nil
+	loadedPageEmpty := len(h.currentPage.data) == 0
+	priorityDoesNotExists := !utils.FileExists(indexPath)
+
+	if loadedPageEmpty {
+		if priorityDoesNotExists {
+			return true, nil
+		}
 	}
 	priority = binary.LittleEndian.Uint64(h.currentPage.data[:h.config.prioritySize])
 	indexPos = binary.LittleEndian.Uint64(h.currentPage.data[h.config.prioritySize:])
