@@ -4,8 +4,9 @@
 
 `core` is the heart of `kokaq`, a distributed, cloud-native priority queue implementation. It provides the foundational logic and data structures for enabling true, weight-based prioritization across distributed systems.
 
-<!-- [![Go Reference](https://pkg.go.dev/badge/github.com/kokaq/core.svg)](https://pkg.go.dev/github.com/kokaq/core) -->
-<!-- [![Tests](https://github.com/kokaq/core/actions/workflows/test.yml/badge.svg)](https://github.com/kokaq/core/actions/workflows/test.yml) -->
+[![Go Reference](https://pkg.go.dev/badge/github.com/kokaq/core.svg)](https://pkg.go.dev/github.com/kokaq/core)
+[![Tests](https://github.com/kokaq/core/actions/workflows/go.yml/badge.svg)](https://github.com/kokaq/core/actions/workflows/go.yml)
+
 
 ## 🔍 What is core?
 
